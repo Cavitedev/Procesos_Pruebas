@@ -126,28 +126,65 @@ function Usuario(nick, juego) {
   };
 }
 
-function Jugador(usuario) {
+function Jugador(usuario, partida) {
   this.usuario = usuario;
+  this.partida = partida;
   this.tablero;
-  this.barcos;
+  this.flota;
+  this.despliegueListo = false;
 
   this.nick = () => usuario.nick;
+  this.colocarBarco = (indiceBarco, x, y, orientacion = "horizontal") => {
+    this.despliegueListo = false;
+    if (this.partida.fase != "desplegando") return false;
+    if (indiceBarco < 0 || indiceBarco >= this.flota.length) return false;
+    let barco = this.flota[indiceBarco];
+
+    let haSidoColocado = this.tablero.colocarBarco(barco, x, y, orientacion);
+    if (haSidoColocado) {
+      barco.desplegado = true;
+      barco.orientacion = orientacion;
+    }
+    this.partida.comprobarFase();
+    return haSidoColocado;
+  };
+
+  this.confirmarTablero = () => {
+    if (this.estaDesplegado) {
+      this.despliegueListo = true;
+      this.partida.comprobarFase();
+    }
+  };
+
+  this.estaDesplegado = () => {
+    for (const barco of this.flota) {
+      if (!barco.desplegado) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  this.disparar = (x, y) => {
+    return this.partida.disparar(this.nick(), x, y);
+  };
 }
 
 function Partida(codigo, usuario) {
   this.codigo;
   this.fase = "inicial";
   this.owner = usuario;
+  this.turno = 0;
 
   this.crearJugador = (usuario) => {
-    let jugador = new Jugador(usuario);
-    // Actualizar luego para tener todos los barcos
-    let barcos = [new Barco(1), new Barco(3), new Barco(3)];
+    let jugador = new Jugador(usuario, this);
+    // Actualizar luego para tener todos los flota
+    let flota = [new Barco(1), new Barco(1), new Barco(2)];
     let tablero = new Tablero();
     //Cambiar tamaño si hace falta
     tablero.crearTablero(8);
 
-    jugador.barcos = barcos;
+    jugador.flota = flota;
     jugador.tablero = tablero;
 
     return jugador;
@@ -172,6 +209,13 @@ function Partida(codigo, usuario) {
     return true;
   };
 
+  this.obtenerJugador = function (nick) {
+    let idx = this.jugadores.findIndex((p) => p.nick() == nick);
+    if (idx != -1) {
+      return this.jugadores[idx];
+    }
+  };
+
   this.eliminarJugador = function (nick) {
     let idx = this.jugadores.findIndex((p) => p.nick() == nick);
     if (idx != -1) {
@@ -184,9 +228,17 @@ function Partida(codigo, usuario) {
   };
 
   this.comprobarFase = function () {
-    if (!this.hayHueco()) {
+    if (this.estaDesplegado()) {
       this.fase = "jugando";
+    } else if (!this.hayHueco()) {
+      this.fase = "desplegando";
     }
+  };
+
+  this.hayHueco = () => this.jugadores.length < maxJugadores;
+
+  this.estaDesplegado = () => {
+    return this.jugadores.every((jugador) => jugador.despliegueListo);
   };
 
   this.esJugando = function () {
@@ -201,20 +253,47 @@ function Partida(codigo, usuario) {
     return this.jugadores.some((j) => j.nick == nick);
   };
 
-  this.hayHueco = () => this.jugadores.length < maxJugadores;
+  this.otroTurno = () => (this.turno + 1) % this.jugadores.length;
+
+  this.cambiarTurno = () => {
+    this.turno = this.otroTurno();
+  };
+
+  this.jugadorTurnoActual = () => this.jugadores[this.turno];
+  this.jugadorSinTurnoActual = () => this.jugadores[this.otroTurno()];
+
+  this.disparar = (nick, x, y) => {
+    const jugadorTurno = this.jugadorTurnoActual();
+
+    if (jugadorTurno.nick() != nick) {
+      console.log("No es el turno de", nick);
+      return false;
+    }
+
+    const jugadorRecibeAtaque = jugadorTurnoActual;
+    const tableroAtacado = jugadorRecibeAtaque.tablero;
+
+    tableroAtacado.recibirDisparo(x, y);
+    this.comprobarFase();
+  };
 }
 
 function Barco(tamano) {
   this.tamano = tamano;
   this.vida = tamano;
-  this.golpear = () => {};
+  this.desplegado = false;
+  this.recibirDisparo = () => {};
 }
 
 function CeldaBarco(barco) {
   this.barco = barco;
+  this.golpeado = false;
+  this.estado = "intacto";
 
-  this.golpear = () => {
+  this.recibirDisparo = () => {
+    if (this.golpeado) return "Este barco ya fue golpeado";
     this.barco.vida -= 1;
+    this.golpeado = true;
     let vidaTexto =
       this.barco.vida == 0
         ? "Barco hundido"
@@ -222,19 +301,35 @@ function CeldaBarco(barco) {
     return `Barco de tamaño ${this.barco.tamano} golpeado, ${vidaTexto}`;
   };
 
+  this.estadoNoGolpeado = () => {
+    return "Barco";
+  };
+
   this.estadoGolpeado = () => {
     return "Barco ya golpeado";
   };
+
+  this.sePuedeSobrescribir = () => false;
+
+  this.contieneAlBarco = (barco) => barco === this.barco;
 }
 
 function Agua() {
-  this.golpear = () => {
+  this.recibirDisparo = () => {
+    return "Agua";
+  };
+
+  this.estadoNoGolpeado = () => {
     return "Agua";
   };
 
   this.estadoGolpeado = () => {
-    return "Agua ya golpeada";
+    return "Agua";
   };
+
+  this.sePuedeSobrescribir = () => true;
+
+  this.contieneAlBarco = (barco) => false;
 }
 
 function Celda(x, y) {
@@ -242,13 +337,22 @@ function Celda(x, y) {
   this.y = y;
 
   this.contiene = new Agua();
-  this.golpeado = false;
 
-  this.golpear = () => {
+  this.recibirDisparo = () => {
+    return this.contiene.recibirDisparo();
+  };
+
+  this.estado = () => {
     if (this.golpeado) return this.contiene.estadoGolpeado();
+    return this.contiene.estadoNoGolpeado();
+  };
 
-    this.golpeado = true;
-    return this.contiene.golpear();
+  this.sePuedeSobrescribir = () => {
+    return this.contiene.sePuedeSobrescribir();
+  };
+
+  this.contieneAlBarco = (barco) => {
+    return this.contiene.contieneAlBarco(barco);
   };
 }
 
@@ -263,5 +367,80 @@ function Tablero() {
         this.celdas[x][y] = new Celda(x, y);
       }
     }
+  };
+
+  this.obtenerCelda = (x, y) => {
+    if (
+      x < 0 ||
+      y < 0 ||
+      x >= this.celdas[0].length ||
+      y >= this.celdas.length
+    ) {
+      return false;
+    }
+
+    return this.celdas[x][y];
+  };
+
+  this.recibirDisparo = (x, y) => {
+    let celda = this.obtenerCelda(x, y);
+    celda.recibirDisparo();
+  };
+
+  this.colocarBarco = (barco, x, y, orientacion = "horizontal") => {
+    orientacion = orientacion.toLowerCase();
+    if (orientacion != "horizontal" && orientacion != "vertical") return false;
+
+    const sePuedeColocar = this.sePuedeColocarBarco(barco, x, y, orientacion);
+    if (!sePuedeColocar) {
+      return false;
+    }
+
+    this.limpiarBarcoDelTablero(barco);
+
+    let seHaColocado = this.colocarBarcoForzado(barco, x, y, orientacion);
+    return seHaColocado;
+  };
+
+  this.sePuedeColocarBarco = (barco, x, y, orientacion = "horizontal") => {
+    for (let offset = 0; offset < barco.tamano; offset++) {
+      let celda;
+      if (orientacion === "horizontal") {
+        celda = this.obtenerCelda(x + offset, y);
+      } else {
+        celda = this.obtenerCelda(x, y + offset);
+      }
+
+      if (!celda || !celda.sePuedeSobrescribir()) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  this.limpiarBarcoDelTablero = (barco) => {
+    for (let i = 0; i < this.celdas.length; i++) {
+      const fila = this.celdas[i];
+      for (let j = 0; j < fila.length; j++) {
+        const celda = fila[j];
+        if (celda.contieneAlBarco(barco)) {
+          celda.contiene = new Agua();
+        }
+      }
+    }
+  };
+
+  this.colocarBarcoForzado = (barco, x, y, orientacion = "horizontal") => {
+    for (let offset = 0; offset < barco.tamano; offset++) {
+      let celda;
+      if (orientacion === "horizontal") {
+        celda = this.obtenerCelda(x + offset, y);
+      } else {
+        celda = this.obtenerCelda(x, y + offset);
+      }
+
+      celda.contiene = new CeldaBarco(barco);
+    }
+    return true;
   };
 }
